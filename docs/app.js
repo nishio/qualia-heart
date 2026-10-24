@@ -1,7 +1,18 @@
-import { Engine } from './engine.js';
+// ?v=<content hash> from index.html (tools/stamp.mjs), passed on to every file this
+// page loads, so a cached old copy is never mixed with new code
+const V = new URL(import.meta.url).search;
+const $ = (id) => document.getElementById(id);
+
+// help works even if anything below fails
+const helpDialog = $('helpDialog');
+$('help').addEventListener('click', () => helpDialog.showModal());
+$('helpClose').addEventListener('click', () => helpDialog.close());
+// a click on the backdrop (outside the dialog box) closes it
+helpDialog.addEventListener('click', (e) => { if (e.target === helpDialog) helpDialog.close(); });
+
+const { Engine } = await import(`./engine.js${V}`);
 
 const KEY = 'qualia-heart-v1';
-const $ = (id) => document.getElementById(id);
 const log = $('log');
 const input = $('input');
 
@@ -53,7 +64,7 @@ function startSem(packId) {
   sem.state = 'loading';
   sem.started = Date.now();
   showSem();
-  sem.worker = new Worker('sem-worker.js', { type: 'module' });
+  sem.worker = new Worker(`sem-worker.js${V}`, { type: 'module' });
   sem.worker.onmessage = (e) => {
     const m = e.data;
     if (m.type === 'progress') {
@@ -169,12 +180,6 @@ $('debug').addEventListener('change', (e) => {
   document.body.classList.toggle('debug', e.target.checked);
 });
 
-const helpDialog = $('helpDialog');
-$('help').addEventListener('click', () => helpDialog.showModal());
-$('helpClose').addEventListener('click', () => helpDialog.close());
-// a click on the backdrop (outside the dialog box) closes it
-helpDialog.addEventListener('click', (e) => { if (e.target === helpDialog) helpDialog.close(); });
-
 $('reset').addEventListener('click', () => {
   store.clear();
   engine.reset();
@@ -185,7 +190,7 @@ $('reset').addEventListener('click', () => {
 });
 
 async function main() {
-  const pack = await (await fetch('pack/qualia.json')).json();
+  const pack = await (await fetch(`pack/qualia.json${V}`)).json();
   engine = new Engine(pack);
   const n = (a, k) => a.reduce((s, x) => s + x[k].length, 0);
   const more = pack.intents.reduce((s, i) => s + (i.more?.length || 0), 0);
