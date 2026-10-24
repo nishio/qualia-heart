@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Qualia Heart</title>
+<meta name="description" content="LLM を使わずにブラウザだけで動く、クオリアさんの辞書型対話エンジン">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="title">
+    <h1>クオリアさん</h1>
+    <p>LLM を使わない辞書型対話 — 現代の Heart</p>
+  </div>
+  <div class="tools">
+    <label class="toggle"><input type="checkbox" id="debug"> 仕組み</label>
+    <button id="reset" type="button">最初から</button>
+  </div>
+</header>
+
+<details id="about">
+  <summary>これは何？</summary>
+  <p>このクオリアさんは、実行時に LLM を一切使いません。大型の LLM があらかじめ書いた会話ルール
+  （ユーザー発話の例文と返答）をブラウザが読み込み、入力と例文の文字 n-gram の近さで返答を選びます。
+  1999〜2004 年の人工無脳「Heart」と同じく、人格データと再生エンジンが分かれています。</p>
+  <p id="stats"></p>
+  <p>「仕組み」をオンにすると、どのルールが選ばれたかと候補の得点が見えます。</p>
+  <p>原投稿: <a href="https://scrapbox.io/qualia-san/Qualia-san">@Qualia_san</a>（CC BY 4.0）。
+  「正典」と表示された返答は原投稿からの逐語引用です。それ以外の返答は LLM が生成したもので、原作の発言ではありません。</p>
+</details>
+<main id="log" aria-live="polite"></main>
+
+<form id="form" autocomplete="off">
+  <input id="input" type="text" placeholder="話しかける" enterkeyhint="send" aria-label="メッセージ" disabled>
+  <button id="send" type="submit" disabled>送信</button>
+</form>
+
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
