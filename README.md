@@ -2,6 +2,8 @@
 
 LLM を使わずにブラウザだけで動く、クオリアさんの辞書型対話エンジン。
 
+**https://nishio.github.io/qualia-heart/** （GitHub Pages、`docs/` を公開）
+
 1999〜2004 年の人工無脳「Heart」（人格データと再生エンジンを分けた文字列マッチの対話システム）の考え方を、
 現代の LLM で作り直す実験。人手で書くのが大変だった会話ルール——とくに例文の言い換えと、
 bot の発言を受けた文脈つきの返し——を LLM に大量に書かせ、実行時は静的ファイルと数百行の JavaScript だけで動かす。
@@ -30,7 +32,8 @@ docs/pack/qualia.json ── docs/engine.js がブラウザで読み込む
 ## 使い方
 
 ```sh
-node tools/build.mjs                         # gen/out → docs/pack/qualia.json
+npm run build                                # build → embed（意味検索用の埋め込み）→ stamp（キャッシュ対策の ?v=）
+node tools/build.mjs                         # gen/out → docs/pack/qualia.json だけ
 node tools/chat.mjs --debug                  # 端末で対話（1行1ターン）
 node tools/chat.mjs --state s.json "こんにちは"  # 1ターンずつ状態を保存して進める
 node tools/eval.mjs eval/heldout.jsonl --out eval/results/heldout.jsonl
