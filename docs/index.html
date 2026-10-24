@@ -14,6 +14,7 @@
     <p>LLM を使わない辞書型対話 — 現代の Heart</p>
   </div>
   <div class="tools">
+    <button id="sem" class="chip" type="button" title="意味検索（埋め込みモデル）の状態。押すと ON/OFF">意味検索 —</button>
     <label class="toggle"><input type="checkbox" id="debug"> 仕組み</label>
     <button id="reset" type="button">最初から</button>
   </div>
@@ -26,6 +27,9 @@
   1999〜2004 年の人工無脳「Heart」と同じく、人格データと再生エンジンが分かれています。</p>
   <p id="stats"></p>
   <p>「仕組み」をオンにすると、どのルールが選ばれたかと候補の得点が見えます。</p>
+  <p>「意味検索」は追加の層です。開いてすぐは文字の近さだけで動き、裏で小さな埋め込みモデル（約110MB、初回のみ）を読み込むと自動で ON になります。
+  文字の近さで当たらなかった入力だけ、意味の近さで拾います。モデルはブラウザの中で動き、入力はどこにも送られません。
+  押すと ON/OFF を切り替えられます。データ節約モードの端末では自動では読み込みません。</p>
   <p>原投稿: <a href="https://scrapbox.io/qualia-san/Qualia-san">@Qualia_san</a>（CC BY 4.0）。
   「正典」と表示された返答は原投稿からの逐語引用です。それ以外の返答は LLM が生成したもので、原作の発言ではありません。</p>
 </details>

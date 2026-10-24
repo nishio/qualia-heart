@@ -1,4 +1,5 @@
 // Merge gen/out/*.json into docs/pack/qualia.json.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,6 +56,8 @@ for (const f of fs.readdirSync(outDir).filter((f) => f.endsWith('.json')).sort()
   }
 }
 
+// content id: the semantic layer refuses embeddings computed for another pack
+pack.id = crypto.createHash('sha256').update(JSON.stringify(pack)).digest('hex').slice(0, 16);
 const json = JSON.stringify(pack);
 fs.mkdirSync(path.dirname(packFile), { recursive: true });
 fs.writeFileSync(packFile, json);

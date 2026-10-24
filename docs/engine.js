@@ -41,6 +41,11 @@ export const DEFAULTS = {
   canonThreshold: 0.45, // canon quotes need a closer match
   marginLow: 0.2,      // below the threshold, the top intent is still taken from this score...
   margin: 0.1,         // ...when it leads the runner-up by this much
+  semThreshold: 0.92,  // semantic layer: minimum embedding similarity (multilingual-e5-small)
+  crisisPrefix: 'life.crisis',          // intents that start the care period
+  careTurns: 6,                         // turns after a crisis reply that stay in care
+  careTopics: ['life', 'daily', 'generic'],
+  careUnits: ['life.crisis_still', 'life.crisis'], // answer from these when another topic would
   contextBoost: 0.12,  // intent whose context matches the previous bot turn
   nextBoost: 0.06,     // intent listed in the previous response's `next`
   recentSize: 40,      // responses remembered to avoid repetition
@@ -74,6 +79,7 @@ export class Engine {
       });
     }
     this.byId = new Map(this.units.map((u) => [u.id, u]));
+    this.awaited = new Set(this.units.flatMap((u) => u.context || []));
     this.#index();
     this.reset();
   }
@@ -147,10 +153,20 @@ export class Engine {
   // Split a message into clauses. A leading back-channel ("なるほど。でも…") or
   // a second question should not decide the match on its own.
   static segments(input) {
-    const parts = String(input).split(/[。．.？?！!\n]+|(?<=[、,])\s*(?=でも|けど|だけど|じゃあ|ただ)/u)
+    const len = (s) => [...normalize(s)].length;
+    let parts = String(input).split(/[。．.？?！!\n]+/u).map((s) => s.trim()).filter(Boolean);
+    // a short lead set off by a comma, space or laugh: "あはは、確かに" "てかさ、宇宙人って"
+    parts = parts.flatMap((p) => {
+      const m = p.match(/^([^、,\s]{1,6}?)(?:[、,\s]+|[wｗ笑]+)(.+)$/u);
+      return m && len(m[2]) >= 3 ? [m[1], m[2]] : [p];
+    });
+    parts = parts.flatMap((p) => p.split(/(?<=[、,\swｗ笑])\s*(?=でも|けど|だけど|じゃあ|ただ|てか|ていうか|それより)/u))
       .map((s) => s.trim()).filter(Boolean);
-    const long = parts.filter((s) => [...normalize(s)].length >= 5);
-    return parts.length > 1 && long.length ? long : [];
+    // leading greetings and back-channels give way to the content after them
+    while (parts.length > 1 && len(parts[0]) <= 6 && parts.slice(1).some((s) => len(s) >= 5)) parts.shift();
+    // so does a trailing laugh ("〜だよね 笑")
+    while (parts.length > 1 && len(parts.at(-1)) <= 2 && parts.some((s) => len(s) >= 5)) parts.pop();
+    return parts.length === 1 && len(parts[0]) === len(input) ? [] : parts;
   }
 
   // Score every unit against the input; returns sorted candidates.
@@ -229,7 +245,8 @@ export class Engine {
     return pool[Math.floor(this.rand() * pool.length)];
   }
 
-  respond(input) {
+  // opts.semantic: [{id, score}] from the semantic layer, best first (optional)
+  respond(input, opts = {}) {
     const st = this.state;
     st.turn++;
     const cands = this.score(input);
@@ -261,6 +278,35 @@ export class Engine {
       const r = this.#pick(c.unit.responses, (r) => r.id, { ...st.memory, ...captured });
       if (r) { chosen = { ...c, response: r, captured }; break; }
     }
+    // semantic layer (optional): when the n-gram match finds nothing, take the
+    // closest unit by meaning if it is close enough
+    if (!chosen && opts.semantic) {
+      for (const s of opts.semantic) {
+        if (s.score < this.opts.semThreshold) break;
+        const unit = this.byId.get(s.id);
+        if (!unit || unit.context || unit.followup) continue;
+        if (unit.kind === 'canon' && st.recent.includes(unit.id)) continue;
+        const r = this.#pick(unit.responses, (r) => r.id);
+        if (r) { chosen = { unit, score: s.score, response: r, captured: {}, semantic: true }; break; }
+      }
+    }
+    // care: for a few turns after a crisis reply, only plain-talk topics answer.
+    // A sharp opinion (e.g. on the value of a life) must not follow a crisis.
+    if (st.care > 0) {
+      st.care--;
+      const safe = chosen && chosen.unit.kind === 'intent' && this.opts.careTopics.includes(chosen.unit.id.split('.')[0]);
+      if (!safe) {
+        const units = this.opts.careUnits.map((id) => this.byId.get(id)).filter(Boolean);
+        // unused care replies first; repeating one is still better than a sharp opinion
+        const fresh = units.flatMap((u) => u.responses.filter((x) => !st.recent.includes(x.id)).map((r) => [u, r]));
+        const pool = fresh.length ? fresh : units.flatMap((u) => u.responses.map((r) => [u, r]));
+        if (pool.length) {
+          const [unit, response] = pool[Math.floor(this.rand() * pool.length)];
+          chosen = { unit, score: chosen?.score || 0, response, captured: {}, care: true };
+        }
+      }
+    }
+    if (chosen?.unit.id.startsWith(this.opts.crisisPrefix)) st.care = this.opts.careTurns;
     let result;
     if (chosen) {
       const { unit, response, match, captured } = chosen;
@@ -272,22 +318,29 @@ export class Engine {
         score: chosen.score,
         text: expand(response.text, st.memory),
         sources: unit.sources,
+        via: chosen.care ? 'care' : chosen.semantic ? 'semantic' : 'ngram',
       };
       this.#apply(response);
       st.last = { intent: unit.id, response: response.id, next: response.next || [] };
     } else {
-      const r = this.#pick(this.fallback, (r) => r.id);
+      // after a miss, do not keep switching topics: prefer fallbacks that do not lead elsewhere
+      // (a fallback leads elsewhere when it has `next` or a context reply waits for it)
+      const plain = this.fallback.filter((r) => !r.next?.length && !this.awaited.has(r.id));
+      const pool = st.misses >= 1 && plain.length ? plain : this.fallback;
+      const r = this.#pick(pool, (r) => r.id);
       result = { kind: 'fallback', intent: r?.intent, response: r?.id, score: cands[0]?.score || 0, text: r ? expand(r.text, st.memory) : '……' };
       if (r) {
         this.#apply(r);
         st.last = { intent: r.intent, response: r.id, next: r.next || [] };
       }
     }
+    st.misses = result.kind === 'fallback' ? (st.misses || 0) + 1 : 0;
     if (result.response) {
       st.recent.push(result.response);
       if (st.recent.length > this.opts.recentSize) st.recent.shift();
     }
     result.candidates = cands.slice(0, 5).map((c) => ({ id: c.unit.id, score: +c.score.toFixed(3) }));
+    if (opts.semantic) result.semantic = opts.semantic.slice(0, 3).map((s) => ({ id: s.id, score: +s.score.toFixed(3) }));
     return result;
   }
 

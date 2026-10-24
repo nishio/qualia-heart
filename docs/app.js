@@ -14,10 +14,55 @@ const store = {
 let engine;
 let history = [];
 
+// --- semantic layer: starts without it, loads the model in the background ---
+const SEM_KEY = 'qualia-heart-sem';
+const sem = { worker: null, state: 'idle', pct: 0, enabled: true, pending: new Map(), seq: 0 };
+try { sem.enabled = localStorage.getItem(SEM_KEY) !== 'off'; } catch {}
+const semButton = $('sem');
+
+function showSem() {
+  const label = !sem.enabled ? 'OFF'
+    : sem.state === 'ready' ? 'ON'
+    : sem.state === 'loading' ? `準備中 ${sem.pct}%`
+    : sem.state === 'error' ? '使えません'
+    : '—';
+  semButton.textContent = `意味検索 ${label}`;
+  semButton.classList.toggle('on', sem.enabled && sem.state === 'ready');
+}
+
+function startSem(packId) {
+  if (sem.worker || !sem.enabled) return;
+  sem.state = 'loading';
+  showSem();
+  sem.worker = new Worker('sem-worker.js', { type: 'module' });
+  sem.worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'progress') { sem.pct = Math.floor(100 * m.loaded / m.total); showSem(); }
+    else if (m.type === 'ready') { sem.state = 'ready'; showSem(); }
+    else if (m.type === 'error') { sem.state = 'error'; showSem(); console.warn('semantic layer:', m.message); }
+    else if (m.type === 'result') { sem.pending.get(m.id)?.(m.top); sem.pending.delete(m.id); }
+  };
+  sem.worker.onerror = (e) => { sem.state = 'error'; showSem(); console.warn('semantic worker:', e.message); };
+  sem.worker.postMessage({ type: 'init', packId });
+}
+
+// resolves to the top semantic matches, or null when the layer is off or slow
+function semQuery(text) {
+  if (!sem.enabled || sem.state !== 'ready') return Promise.resolve(null);
+  const id = ++sem.seq;
+  return new Promise((resolve) => {
+    sem.pending.set(id, resolve);
+    sem.worker.postMessage({ type: 'query', id, text });
+    setTimeout(() => { if (sem.pending.delete(id)) resolve(null); }, 3000);
+  });
+}
+
 function trace(r) {
   if (!r) return '';
   const cands = r.candidates.map((c) => `  ${c.score.toFixed(3)} ${c.id}`).join('\n');
-  return `${r.kind} → ${r.response ?? '-'} (${r.score.toFixed(3)})\n${cands}`;
+  const semLines = r.semantic ? '\n意味: ' + r.semantic.map((s) => `${s.id} ${s.score.toFixed(3)}`).join(', ') : '';
+  const via = r.via === 'semantic' ? ' [意味検索]' : '';
+  return `${r.kind}${via} → ${r.response ?? '-'} (${r.score.toFixed(3)})\n${cands}${semLines}`;
 }
 
 function render(m) {
@@ -57,16 +102,17 @@ function greet() {
   render(m);
 }
 
-function say(text) {
+async function say(text) {
   const u = { who: 'user', text };
   history.push(u);
   render(u);
-  const r = engine.respond(text);
   const typing = document.createElement('div');
   typing.className = 'msg bot typing';
   typing.textContent = '…';
   log.append(typing);
   typing.scrollIntoView({ block: 'end' });
+  const semantic = await semQuery(text);
+  const r = engine.respond(text, semantic ? { semantic } : {});
   const delay = Math.min(1200, 250 + r.text.length * 8);
   setTimeout(() => {
     typing.remove();
@@ -83,6 +129,13 @@ $('form').addEventListener('submit', (e) => {
   if (!text) return;
   input.value = '';
   say(text);
+});
+
+semButton.addEventListener('click', () => {
+  sem.enabled = !sem.enabled;
+  try { localStorage.setItem(SEM_KEY, sem.enabled ? 'on' : 'off'); } catch {}
+  if (sem.enabled) startSem(engine.packId);
+  showSem();
 });
 
 $('debug').addEventListener('change', (e) => {
@@ -114,6 +167,11 @@ async function main() {
   input.disabled = false;
   $('send').disabled = false;
   input.focus();
+  engine.packId = pack.id;
+  showSem();
+  // the rule engine is usable now; fetch the semantic model afterwards, unless data saving is on
+  const saveData = navigator.connection?.saveData === true;
+  if (sem.enabled && !saveData) setTimeout(() => startSem(pack.id), 1500);
 }
 
 main().catch((e) => {
