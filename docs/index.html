@@ -14,25 +14,18 @@
     <p>LLM を使わない辞書型対話 — 現代の Heart</p>
   </div>
   <div class="tools">
-    <button id="sem" class="chip" type="button" title="意味検索（埋め込みモデル）の状態。押すと ON/OFF">意味検索 —</button>
+    <button id="sem" class="sem" type="button" data-state="idle" title="意味検索（埋め込みモデル）。押すと ON/OFF">
+      <span class="dot" aria-hidden="true"></span><span class="sem-label">意味検索</span><span class="sem-state">—</span>
+    </button>
     <label class="toggle"><input type="checkbox" id="debug"> 仕組み</label>
     <button id="reset" type="button">最初から</button>
+    <button id="help" class="help" type="button" aria-label="ヘルプ：技術解説">?</button>
   </div>
+  <div class="progress" id="semProgress" hidden><div class="bar" id="semBar"></div></div>
 </header>
 
-<details id="about">
-  <summary>これは何？</summary>
-  <p>このクオリアさんは、実行時に LLM を一切使いません。大型の LLM があらかじめ書いた会話ルール
-  （ユーザー発話の例文と返答）をブラウザが読み込み、入力と例文の文字 n-gram の近さで返答を選びます。
-  1999〜2004 年の人工無脳「Heart」と同じく、人格データと再生エンジンが分かれています。</p>
-  <p id="stats"></p>
-  <p>「仕組み」をオンにすると、どのルールが選ばれたかと候補の得点が見えます。</p>
-  <p>「意味検索」は追加の層です。開いてすぐは文字の近さだけで動き、裏で小さな埋め込みモデル（約110MB、初回のみ）を読み込むと自動で ON になります。
-  文字の近さで当たらなかった入力だけ、意味の近さで拾います。モデルはブラウザの中で動き、入力はどこにも送られません。
-  押すと ON/OFF を切り替えられます。データ節約モードの端末では自動では読み込みません。</p>
-  <p>原投稿: <a href="https://scrapbox.io/qualia-san/Qualia-san">@Qualia_san</a>（CC BY 4.0）。
-  「正典」と表示された返答は原投稿からの逐語引用です。それ以外の返答は LLM が生成したもので、原作の発言ではありません。</p>
-</details>
+<div class="toast" id="toast" role="status" hidden></div>
+
 <main id="log" aria-live="polite"></main>
 
 <form id="form" autocomplete="off">
@@ -40,6 +33,78 @@
   <button id="send" type="submit" disabled>送信</button>
 </form>
 
+<dialog id="helpDialog" aria-labelledby="helpTitle">
+  <div class="help-head">
+    <h2 id="helpTitle">技術解説</h2>
+    <button type="button" id="helpClose" aria-label="閉じる">閉じる</button>
+  </div>
+  <div class="help-body">
+    <section>
+      <h3>これは何か</h3>
+      <p>このクオリアさんは、会話の最中に LLM を一切使いません。大型の LLM があらかじめ書いた会話ルールをブラウザが読み込み、
+      入力に一番近いルールの返答を選びます。1999〜2004 年の人工無脳「Heart」と同じく、人格データ（辞書）と再生エンジンが分かれています。
+      エンジンは依存ライブラリなしの JavaScript 数百行です。</p>
+      <p id="stats" class="stats"></p>
+    </section>
+
+    <section>
+      <h3>辞書の作り方</h3>
+      <ul>
+        <li><b>意図</b>：「ユーザーがこう言ったら」の単位。それぞれに<b>例文</b>（ユーザーが打ちそうな言い方を十数〜数十通り）と<b>返答</b>（数通り）を持つ。</li>
+        <li><b>文脈つき意図</b>：直前のクオリアさんの発言への返し（問いかけへの答え、反論、聞き返し）。Heart のデータファイル A に当たる。</li>
+        <li><b>補足</b>：「なんで？」「たとえば？」と聞き返されたときに出す、一段深い説明。</li>
+        <li><b>正典</b>：人間がレビューして投稿した原作の発言 202 件。LLM が「この発言が答えになる問い」を付けて索引にした。引用は逐語で、ビルド時に検査する。</li>
+        <li>LLM が話題ごとに並列で書き、利用者役の LLM と 20 往復ずつ会話させて外れた所を直す、を繰り返した。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>入力の処理</h3>
+      <ol>
+        <li><b>正規表現</b>：名前の名乗り、危機を示す語、記号だけの入力などは先に正規表現で拾う。名前は記憶に入る。</li>
+        <li><b>節に分ける</b>：句点や読点で区切り、先頭の挨拶・相づち（「こんにちは。」「まあいいや。」）と文末の「笑」を落とす。</li>
+        <li><b>正規化</b>：全角半角をそろえ、小文字にし、カタカナをひらがなにし、記号と空白を消す。</li>
+        <li><b>文字 n-gram</b>：1〜3 文字の並びに分け、TF-IDF で重み付けする。多くの意図に出る言い回し（「〜ってどう思う」）は軽くなる。</li>
+        <li><b>照合</b>：約 1 万 2 千の例文との余弦類似度を計算し、意図の得点はその意図で一番近い例文の値にする。</li>
+        <li><b>文脈</b>：直前の発言に対する返しの意図だけが候補に入り、加点される。直前の話題の続きも少し加点される。</li>
+        <li><b>選択</b>：得点 0.30 以上（正典は 0.45 以上）、または 2 位に大差をつけた 1 位を採る。「なんで？」系は直前の話題の補足を返す。</li>
+        <li><b>返答</b>：その意図の返答のうち、最近使っていないものから選び、<code>{name}</code> などを記憶で埋める。</li>
+        <li>どれにも届かなければ、分からないと言う（意味検索が ON なら、その前に意味で探す）。</li>
+      </ol>
+    </section>
+
+    <section>
+      <h3>意味検索</h3>
+      <p>文字の近さでは「言い換え」を拾えません。そこで、開いてすぐは文字の近さだけで動き、裏で小さな多言語の埋め込みモデル
+      （multilingual-e5-small、約 110MB、初回のみ）を読み込み、揃ったら自動で ON にします。2 回目以降はブラウザのキャッシュから読みます。</p>
+      <p>例文の埋め込みは事前に計算して配っているので、会話中に計算するのは入力 1 文だけです。文字の近さで外れた入力に限って、
+      意味の近さ 0.92 以上の意図を採ります。モデルはブラウザの中（Web Worker）で動き、入力はどこにも送られません。
+      データ節約モードの端末では自動では読み込みません。ヘッダーのボタンで ON/OFF できます。</p>
+    </section>
+
+    <section>
+      <h3>記憶と安全</h3>
+      <p>名乗った名前、直前の話題、最近使った返答は、この端末のブラウザにだけ保存されます（「最初から」で消えます）。
+      話していない過去を覚えているふりはしません。</p>
+      <p>死にたい・消えたいといった表明には相談先を案内し、その後しばらくは別の話題の鋭い返答を出さないようにしています。</p>
+    </section>
+
+    <section>
+      <h3>「仕組み」表示の読み方</h3>
+      <ul>
+        <li><code>intent</code> 例文の近さで選んだ／<code>pattern</code> 正規表現で選んだ／<code>canon</code> 正典の引用／<code>more</code> 聞き返しへの補足／<code>fallback</code> 当たりなし</li>
+        <li><code>[意味検索]</code> 意味の近さで拾った／<code>[care]</code> 危機の後の配慮で差し替えた</li>
+        <li>下の数字は候補の上位 5 件と得点。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>出典</h3>
+      <p>原投稿は <a href="https://scrapbox.io/qualia-san/Qualia-san" target="_blank" rel="noopener">@Qualia_san</a>（CC BY 4.0）。
+      「正典」バッジ付きの返答は原投稿からの逐語引用で、元の投稿にリンクしています。それ以外の返答は LLM が生成したもので、原作の発言ではありません。</p>
+    </section>
+  </div>
+</dialog>
 
 <script type="module" src="app.js"></script>
 </body>

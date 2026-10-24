@@ -16,15 +16,13 @@ async function init(packId) {
   meta = await m.json();
   if (meta.pack !== packId) throw new Error('embeddings do not match the rule pack');
   data = new Int8Array(await b.arrayBuffer());
-  const files = new Map();
   extractor = await pipeline('feature-extraction', MODEL, {
     dtype: DTYPE,
+    // the small config/tokenizer files finish first; only the model weights
+    // (~110 MB) say how far along the download is
     progress_callback: (p) => {
-      if (p.status !== 'progress' || !p.total) return;
-      files.set(p.file, [p.loaded, p.total]);
-      let loaded = 0, total = 0;
-      for (const [l, t] of files.values()) { loaded += l; total += t; }
-      self.postMessage({ type: 'progress', loaded, total });
+      if (p.status !== 'progress' || !p.total || !String(p.file).endsWith('.onnx')) return;
+      self.postMessage({ type: 'progress', loaded: p.loaded, total: p.total });
     },
   });
   // first call compiles the model; do it before reporting ready
